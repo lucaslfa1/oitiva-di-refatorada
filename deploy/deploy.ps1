@@ -1,5 +1,6 @@
-# Script de Deploy com Cache-Busting Automatico
-# Incrementa a versao dos assets antes do deploy
+# Script de Deploy com Cache-Busting Automatico (PRODUCAO)
+# Incrementa a versao dos assets, commita/empurra e faz deploy no Cloud Run.
+# Este script vive em deploy/ e e ancorado na raiz do repositorio.
 
 param(
     [switch]$SkipBuild,
@@ -7,24 +8,27 @@ param(
     [switch]$DeployCortex
 )
 
+# Ancorar na raiz do repositorio (deploy/ -> raiz), para que os caminhos
+# relativos funcionem independentemente de onde o script foi invocado.
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $RepoRoot
+
 Write-Host "Sentinel Deploy Script" -ForegroundColor Cyan
 Write-Host "========================" -ForegroundColor Cyan
 
-# 1. Incrementar versao no index.html
-$indexPath = "Backend\wwwroot\index.html"
+# 1. Incrementar versao no index.html (cache-busting dos assets do frontend)
+$indexPath = "services\api\wwwroot\index.html"
 $content = Get-Content $indexPath -Raw
 
-# Encontrar versao atual
 if ($content -match 'app\.js\?v=(\d+)') {
     $currentVersion = [int]$matches[1]
     $newVersion = $currentVersion + 1
-    
+
     Write-Host "Versao atual: v=$currentVersion" -ForegroundColor Yellow
     Write-Host "Nova versao:  v=$newVersion" -ForegroundColor Green
-    
-    # Substituir todas as ocorrencias de versao
+
     $newContent = $content -replace 'app\.js\?v=\d+', "app.js?v=$newVersion"
-    
+
     if (-not $DryRun) {
         Set-Content $indexPath -Value $newContent -NoNewline
         Write-Host "index.html atualizado" -ForegroundColor Green
@@ -41,14 +45,14 @@ else {
 if (-not $DryRun) {
     Write-Host ""
     Write-Host "Commitando alteracoes..." -ForegroundColor Cyan
-    
+
     git add -A
     $commitMessage = "chore: bump version to v$newVersion for cache-busting"
     git commit -m $commitMessage
-    
+
     Write-Host "Enviando para origin/main..." -ForegroundColor Cyan
     git push origin main
-    
+
     Write-Host "Push concluido" -ForegroundColor Green
 }
 
@@ -58,31 +62,26 @@ if (-not $SkipBuild -and -not $DryRun) {
     if ($DeployCortex) {
         Write-Host ""
         Write-Host "Deploying sentinel-cortex (Python)..." -ForegroundColor Cyan
-        
-        Set-Location sentinel-cortex
+
+        Set-Location (Join-Path $RepoRoot 'services\cortex')
         gcloud run deploy sentinel-cortex --source . --region us-central1 --project sinistroia --allow-unauthenticated --memory 2Gi --cpu 1 --timeout 300s
-        Set-Location ..
-        
+        Set-Location $RepoRoot
+
         Write-Host "sentinel-cortex deploy concluido" -ForegroundColor Green
     }
 
     # 3b. Deploy sentinel-nstech (Backend .NET)
     Write-Host ""
     Write-Host "Deploying sentinel-nstech (Backend .NET)..." -ForegroundColor Cyan
-    
-    $envVars = "ASPNETCORE_ENVIRONMENT=Production,MediaProcessor__BaseUrl=https://sentinel-cortex-557004456190.us-central1.run.app"
-    if (-not [string]::IsNullOrEmpty($env:GEMINI_API_KEY)) {
-        Write-Host "Configurando GEMINI_API_KEY no Cloud Run a partir de `$env:GEMINI_API_KEY..." -ForegroundColor Green
-        $envVars += ",GEMINI_API_KEY=$($env:GEMINI_API_KEY)"
-    } else {
-        Write-Host "AVISO: `$env:GEMINI_API_KEY local está vazia. O deploy não atualizará a chave no Cloud Run." -ForegroundColor Yellow
-    }
 
-    Set-Location Backend
+    # NOTA: as chaves Azure (Speech / OpenAI / Text Analytics) devem ser injetadas via
+    # --set-env-vars ou na configuracao do Cloud Run. Ver .env.example para a lista completa.
+    $envVars = "ASPNETCORE_ENVIRONMENT=Production,MediaProcessor__BaseUrl=https://sentinel-cortex-557004456190.us-central1.run.app"
+
+    Set-Location (Join-Path $RepoRoot 'services\api')
     gcloud run deploy sentinel-nstech --source . --region us-central1 --project sinistroia --allow-unauthenticated --memory 2Gi --timeout 900s --set-env-vars $envVars
-    
-    Set-Location ..
-    
+    Set-Location $RepoRoot
+
     Write-Host ""
     Write-Host "Deploy concluido!" -ForegroundColor Green
     Write-Host "URL: https://sentinel-nstech-557004456190.us-central1.run.app" -ForegroundColor Cyan
@@ -94,4 +93,3 @@ elseif ($SkipBuild) {
 
 Write-Host ""
 Write-Host "Script finalizado!" -ForegroundColor Green
-

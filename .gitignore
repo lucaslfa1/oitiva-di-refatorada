@@ -17,7 +17,7 @@ backup/
 sentinel_cortex_logs.txt
 
 # Uploads e mídia gerada em runtime
-Backend/wwwroot/uploads/
+services/api/wwwroot/uploads/
 *.wav
 *.mp3
 *.mp4
