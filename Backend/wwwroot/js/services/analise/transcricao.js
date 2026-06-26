@@ -1,5 +1,23 @@
 /**
  * Fluxo: transcrição (áudio)
+ *
+ * Módulo responsável pelo passo de TRANSCRIÇÃO do pipeline forense de sinistros:
+ * recebe o arquivo de áudio selecionado pelo usuário, dispara a transcrição via
+ * backend (Azure Speech) e renderiza o resultado na UI. Também coordena efeitos
+ * colaterais de UX:
+ *  - progresso em tempo real via SignalR (duas barras: transcrição "simples" e
+ *    barra de "merge", usada quando há junção de múltiplos trechos/abas);
+ *  - persistência de rascunho (draft) da transcrição;
+ *  - extração automática de "insights" (dados estruturados) em background.
+ *
+ * Convenções importantes deste arquivo:
+ *  - Toda interação com o DOM é feita por id, defensivamente (sempre checando se
+ *    o elemento existe antes de usar), pois a presença dos elementos depende da
+ *    aba/tela ativa.
+ *  - O estado canônico da transcrição vive em `core/state.js`; este módulo apenas
+ *    o atualiza (setTranscricao / setTranscricaoValidada) e o lê (getTranscricao).
+ *  - Imports dinâmicos (`await import(...)`) são usados para quebrar dependências
+ *    circulares entre os módulos de análise e a camada de API.
  */
 
 import { gerarTranscricaoAPI } from '../../api/sinistroApi.js?v=3';
@@ -11,6 +29,27 @@ import { getLoaderHTML, getErrorHTML } from '../../ui/modal.js';
 import { toast } from '../../ui/toast.js';
 import { saveDraft } from '../../core/drafts.js';
 
+/**
+ * @deprecated CÓDIGO MORTO. Esta é uma cópia duplicada da geração de laudo
+ * pericial que NÃO é mais utilizada a partir deste módulo. A fonte canônica e
+ * mantida é `analise/relatorio.js` (a renderização final delega para
+ * `renderizarLaudoComDados` daquele módulo). Mantida aqui apenas por
+ * compatibilidade histórica; não documentar comportamento como referência nem
+ * adicionar novas dependências a esta função — utilize `analise/relatorio.js`.
+ *
+ * Comportamento (apenas para fins históricos): lê a transcrição do estado, exige
+ * que ela exista, e dispara a API de geração de laudo (`gerarLaudoAPI`), renderizando
+ * o resultado via `renderizarLaudoComDados` de `./relatorio.js`. Coordena estado de
+ * UI (botão "GERAR LAUDO", loader, scroll, botões de edição/ações).
+ *
+ * Efeitos colaterais: muta o DOM (innerHTML/disabled/classes), faz scroll suave até
+ * o laudo, exibe toasts e dispara imports dinâmicos para quebrar dependência circular.
+ *
+ * @returns {Promise<void>} Resolve quando o fluxo termina (sucesso ou falha tratada).
+ *   Retorna cedo (sem efeitos de rede) quando não há transcrição no estado.
+ * @throws {never} Erros de rede/render são capturados internamente e exibidos via toast;
+ *   a Promise não rejeita.
+ */
 export async function gerarRelatorioPericial() {
   const transcricao = getTranscricao();
   if (!transcricao) {
@@ -70,6 +109,45 @@ export async function gerarRelatorioPericial() {
   }
 }
 
+/**
+ * Orquestra o passo de TRANSCRIÇÃO de áudio do pipeline forense.
+ *
+ * Fluxo (o COMO):
+ *  1. Recupera o arquivo de áudio do estado (`getFile('audio')`); aborta com aviso
+ *     se nenhum foi selecionado.
+ *  2. Prepara a UI: desabilita o botão, troca seu rótulo por um loader animado,
+ *     oculta o empty-state e exibe o container/loader da transcrição.
+ *  3. Abre a conexão SignalR ANTES de chamar a API para obter o `connectionId`. Esse
+ *     id é repassado ao backend para que ele empurre eventos de progresso de volta a
+ *     ESTA aba via `updateProgress` (push em tempo real, e não polling).
+ *  4. Chama `gerarTranscricaoAPI(file, connectionId)`, persiste o texto no estado
+ *     (`setTranscricao`) e o marca como validado (`setTranscricaoValidada(true)`).
+ *  5. Salva um rascunho (draft) defensivamente — falha de draft não interrompe o fluxo.
+ *  6. Renderiza a transcrição formatada e revela botões de edição/ações.
+ *  7. Dispara, em BACKGROUND (sem `await`, via `.then`), a extração automática de
+ *     insights (`extrairDadosAPI`), montando cards apenas para campos preenchidos.
+ *
+ * Sobre as DUAS barras de progresso (o PORQUÊ): `updateProgress` atualiza
+ * simultaneamente a barra "simples" (progress*) e a barra de "merge"
+ * (progress*Merge), usada quando há junção de múltiplos trechos/abas. A barra de
+ * merge só é exibida se a aba `tab-merge` estiver visível; ambas são tratadas pelo
+ * mesmo callback para manter os dois indicadores sincronizados.
+ *
+ * Imports dinâmicos (`await import(...)`) são usados para quebrar dependências
+ * circulares com a camada de API.
+ *
+ * Efeitos colaterais: muta extensivamente o DOM (por id, sempre checando existência),
+ * abre conexão SignalR, faz I/O de rede (transcrição + insights), grava draft em
+ * storage, exibe toasts e loga no console. No `finally`, reabilita o botão e agenda
+ * a ocultação das barras de progresso após 3000 ms (3 s) — atraso proposital para que
+ * o usuário enxergue o 100% concluído antes de a barra sumir.
+ *
+ * @returns {Promise<void>} Resolve quando o fluxo principal termina (sucesso ou falha
+ *   tratada). A extração de insights roda em background e pode concluir DEPOIS desta
+ *   Promise. Retorna cedo (sem rede) se não houver arquivo de áudio.
+ * @throws {never} Erros da transcrição são capturados no `catch` e exibidos via toast;
+ *   a Promise não rejeita. Erros de draft e de insights são engolidos separadamente.
+ */
 export async function gerarTranscricao() {
   const file = getFile('audio');
   if (!file) {
@@ -99,6 +177,18 @@ export async function gerarTranscricao() {
     const progressContainerMerge = document.getElementById('progressContainerMerge');
 
     // Atualiza ambas as barras (simples e robusto)
+    /**
+     * Callback de progresso invocado pelo SignalR a cada evento empurrado pelo backend.
+     * Atualiza, de uma só vez, as DUAS barras (simples e de merge) para mantê-las
+     * sincronizadas, independentemente de qual esteja visível no momento.
+     *
+     * @param {string} _msg - Mensagem de status enviada pelo backend. Atualmente
+     *   ignorada (o status textual é zerado via string vazia); mantida na assinatura
+     *   por compatibilidade com o contrato de eventos do SignalR.
+     * @param {number} pct - Percentual de conclusão (0–100) aplicado ao texto e à
+     *   largura CSS de ambas as barras.
+     * @returns {void}
+     */
     const updateProgress = (_msg, pct) => {
       const els = [
         { status: 'progressStatus', percent: 'progressPercent', bar: 'progressBar' },
@@ -213,6 +303,18 @@ export async function gerarTranscricao() {
   }
 }
 
+/**
+ * Traz a transcrição já gerada para a área visível da tela.
+ *
+ * Não gera nada: apenas verifica se existe transcrição no estado e, em caso
+ * afirmativo, faz scroll suave até o container correspondente. Serve como atalho de
+ * navegação para o usuário reencontrar o resultado após rolar a página.
+ *
+ * Efeitos colaterais: rola a viewport (scrollIntoView suave) e/ou exibe um toast
+ * informativo quando não há transcrição disponível.
+ *
+ * @returns {void} Retorna cedo (apenas com toast) se não houver transcrição no estado.
+ */
 export function abrirTranscricao() {
   const transcricao = getTranscricao();
   if (!transcricao) {
