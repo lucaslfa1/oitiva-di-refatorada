@@ -1,4 +1,4 @@
-# Sentinel — Sistema de Análise Forense de Sinistros Veiculares
+# Sentinel — Sistema de Análise Forense de Sinistros
 
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
