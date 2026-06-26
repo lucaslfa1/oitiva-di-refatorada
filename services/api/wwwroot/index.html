@@ -445,7 +445,7 @@
                                     <button onclick="clearFile('video')" class="btn-icon"><i
                                             data-lucide="x"></i></button>
                                 </div>
-                                <video id="videoPreview" controls class="visual-preview"></video>
+                                <video id="videoPreview" controls class="visual-preview" preload="auto" playsinline></video>
                             </div>
                             <label>Prompt adicional</label>
                             <textarea id="ctxVideo"
@@ -614,7 +614,7 @@
     <!-- SignalR -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
     <!-- App Scripts -->
-    <script type="module" src="js/app.js?v=53"></script>
+    <script type="module" src="js/app.js?v=58"></script>
 
     <script>
         // Auth Check & UI Initialization

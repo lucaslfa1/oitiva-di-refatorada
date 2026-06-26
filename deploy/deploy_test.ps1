@@ -61,6 +61,22 @@ if (-not $SkipBuild -and -not $DryRun) {
     # NOTA: as chaves Azure devem ser injetadas via --set-env-vars ou config do Cloud Run (ver .env.example).
     $envVars = "ASPNETCORE_ENVIRONMENT=Production,MediaProcessor__BaseUrl=https://sentinel-cortex-557004456190.us-central1.run.app"
 
+    # Carrega variaveis adicionais do arquivo .env (caso exista na raiz)
+    $envPath = Join-Path $RepoRoot ".env"
+    if (Test-Path $envPath) {
+        Write-Host "Carregando chaves e configuracoes adicionais de $envPath..." -ForegroundColor Yellow
+        Get-Content $envPath | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -and -not $line.StartsWith("#") -and $line -match "^([^=]+)=(.*)$") {
+                $key = $Matches[1].Trim()
+                $val = $Matches[2].Trim()
+                if ($val) {
+                    $envVars += ",$key=$val"
+                }
+            }
+        }
+    }
+
     Set-Location (Join-Path $RepoRoot 'services\api')
     gcloud run deploy sentinel-nstech-test --source . --region us-central1 --project sinistroia --allow-unauthenticated --memory 2Gi --timeout 900s --set-env-vars $envVars
     Set-Location $RepoRoot
