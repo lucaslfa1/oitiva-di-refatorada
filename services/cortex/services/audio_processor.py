@@ -124,11 +124,10 @@ class AudioProcessor:
             # Não é a duração real em segundos (depende de bitrate/codec).
             "original_duration": (len(audio_bytes) if audio_bytes else os.path.getsize(input_path) if input_path else 0)/1000, # Estimado
             # processed_duration vem em ms (len(AudioSegment)); /1000 converte para segundos.
-            "processed_duration": len(audio)/1000,
-            # start_trim: ms de silêncio inicial que teria sido cortado. Como o trim
-            # está desabilitado (passos B acima), `start_trim` permanece como variável
-            # externa não atribuída neste método — mantido aqui sem alterar a lógica.
-            "start_trim_seconds": start_trim/1000
+            "processed_duration": len(audio)/1000
+            # NOTA: a chave 'start_trim_seconds' foi removida — o trim de silêncio inicial
+            # está desabilitado de propósito (preserva os timestamps por palavra da Azure),
+            # então não havia valor real a reportar. Removê-la corrige um NameError latente.
         }
         return processed_bytes, metadata
 

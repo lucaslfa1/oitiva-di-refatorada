@@ -70,7 +70,6 @@ builder.Services.AddControllers();
 builder.Services.AddScoped<ImagemAnaliseService>();
 builder.Services.AddScoped<VideoAnaliseService>();
 builder.Services.AddScoped<DescricaoAnaliseService>();
-builder.Services.AddHttpClient<OpenAITranscricaoService>();
 builder.Services.AddScoped<ITranscricaoService, TranscricaoOrquestradorService>();
 builder.Services.AddScoped<IDescricaoAnaliseService>(sp => sp.GetRequiredService<DescricaoAnaliseService>());
 
@@ -104,10 +103,6 @@ builder.Services.AddHttpClient<AzureOpenAIService>();
 
 // --- AZURE TEXT ANALYTICS (SENTIMENT) ---
 builder.Services.AddScoped<IAzureTextAnalyticsService, AzureTextAnalyticsService>();
-
-// --- GOOGLE CLOUD SPEECH (TODO: implementar GoogleSpeechTranscricaoService) ---
-builder.Services.Configure<GoogleCloudSpeechSettings>(builder.Configuration.GetSection(GoogleCloudSpeechSettings.SectionName));
-// builder.Services.AddScoped<GoogleSpeechTranscricaoService>(); // Classe ainda não implementada
 
 // --- DATABASE ---
 var dbPath = Environment.GetEnvironmentVariable("DB_PATH") ?? "sinistros.db";
